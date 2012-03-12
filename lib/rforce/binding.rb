@@ -176,10 +176,10 @@ module RForce
         'User-Agent' => 'activesalesforce rforce/1.0'
       }
 
-      unless show_debug
-        headers['Accept-Encoding'] = 'gzip'
-        headers['Content-Encoding'] = 'gzip'
-      end
+      #unless show_debug
+      #  headers['Accept-Encoding'] = 'gzip'
+      #  headers['Content-Encoding'] = 'gzip'
+      #end
 
       # Send the request to the server and read the response.
       response = @server.post2(soap_url, request.lstrip, headers)
@@ -230,7 +230,7 @@ module RForce
 
     # encode gzip
     def encode(request)
-      return request if show_debug
+      return request #if show_debug
 
       begin
         ostream = StringIO.new
