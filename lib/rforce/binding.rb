@@ -7,7 +7,7 @@ require 'builder'
 require 'oauth'
 
 module RForce
-  # Implements the connection to the SalesForce server.
+  # Implements the connection to the Salesforce server.
   class Binding
     include RForce
 
@@ -24,15 +24,12 @@ module RForce
 <soap:Envelope xmlns:xsd="http://www.w3.org/2001/XMLSchema"
     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xmlns:partner="urn:partner.soap.sforce.com">
+    xmlns:partner="urn:partner.soap.sforce.com"
     xmlns:spartner="urn:sobject.partner.soap.sforce.com">
   <soap:Header>
     <partner:SessionHeader soap:mustUnderstand='1'>
       <partner:sessionId>%s</partner:sessionId>
     </partner:SessionHeader>
-    <partner:QueryOptions soap:mustUnderstand='1'>
-      <partner:batchSize>%d</partner:batchSize>
-    </partner:QueryOptions>
     %s
   </soap:Header>
   <soap:Body>
@@ -41,6 +38,7 @@ module RForce
 </soap:Envelope>
     HERE
 
+    QueryOptions = '<partner:QueryOptions soap:mustUnderstand=\'1\'><partner:batchSize>%d</partner:batchSize></partner:QueryOptions>'
     AssignmentRuleHeaderUsingRuleId = '<partner:AssignmentRuleHeader soap:mustUnderstand="1"><partner:assignmentRuleId>%s</partner:assignmentRuleId></partner:AssignmentRuleHeader>'
     AssignmentRuleHeaderUsingDefaultRule = '<partner:AssignmentRuleHeader soap:mustUnderstand="1"><partner:useDefaultRule>true</partner:useDefaultRule></partner:AssignmentRuleHeader>'
     MruHeader = '<partner:MruHeader soap:mustUnderstand="1"><partner:updateMru>true</partner:updateMru></partner:MruHeader>'
@@ -49,9 +47,13 @@ module RForce
     # Connect to the server securely.  If you pass an oauth hash, it
     # must contain the keys :consumer_key, :consumer_secret,
     # :access_token, :access_secret, and :login_url.
-    def initialize(url, sid = nil, oauth = nil)
+    #
+    # proxy may be a URL of the form http://user:pass@example.com:port
+    #
+    def initialize(url, sid = nil, oauth = nil, proxy = nil)
       @session_id = sid
       @oauth = oauth
+      @proxy = proxy
       @batch_size = DEFAULT_BATCH_SIZE
 
       init_server(url)
@@ -70,7 +72,10 @@ module RForce
         consumer = OAuth::Consumer.new \
           @oauth[:consumer_key],
           @oauth[:consumer_secret],
-          { :site => url }
+          {
+            :site => url,
+            :proxy => @proxy
+          }
 
         consumer.http.set_debug_output $stderr if show_debug
 
@@ -83,7 +88,7 @@ module RForce
           alias_method :post2, :post
         end
       else
-        @server = Net::HTTP.new(@url.host, @url.port)
+        @server = Net::HTTP.Proxy(@proxy).new(@url.host, @url.port)
         @server.use_ssl = @url.scheme == 'https'
         @server.verify_mode = OpenSSL::SSL::VERIFY_NONE
 
@@ -92,16 +97,21 @@ module RForce
       end
     end
 
-
-    # Log in to the server with a user name and password, remembering
-    # the session ID returned to us by SalesForce.
-    def login(user, password)
+    #  Connect to remote server
+    #
+    def connect(user, password)
       @user = user
       @password = password
 
-      response = call_remote(:login, [:username, user, :password, password])
+      call_remote(:login, [:username, user, :password, password])
+    end
 
-      raise "Incorrect user name / password [#{response.fault}]" unless response.loginResponse
+    # Log in to the server with a user name and password, remembering
+    # the session ID returned to us by Salesforce.
+    def login(user, password)
+      response = connect(user, password)
+
+      raise "Incorrect user name / password [#{response.Fault}]" unless response.loginResponse
 
       result = response[:loginResponse][:result]
       @session_id = result[:sessionId]
@@ -112,9 +122,12 @@ module RForce
     end
 
     # Log in to the server with OAuth, remembering
-    # the session ID returned to us by SalesForce.
+    # the session ID returned to us by Salesforce.
     def login_with_oauth
-      result = @server.post @oauth[:login_url], '', {}
+      result = @server.post \
+        @oauth[:login_url],
+        '',
+        {'content-type' => 'application/x-www-form-urlencoded'}
 
       case result
       when Net::HTTPSuccess
@@ -144,6 +157,12 @@ module RForce
       expand(@builder, {method => args}, urn)
 
       extra_headers = ""
+
+      # QueryOptions is not valid when making an Apex Webservice SOAP call
+      if !block_given?
+        extra_headers << (QueryOptions % @batch_size)
+      end
+
       extra_headers << (AssignmentRuleHeaderUsingRuleId % assignment_rule_id) if assignment_rule_id
       extra_headers << AssignmentRuleHeaderUsingDefaultRule if use_default_rule
       extra_headers << MruHeader if update_mru
@@ -161,7 +180,7 @@ module RForce
 
       # Fill in the blanks of the SOAP envelope with our
       # session ID and the expanded XML of our request.
-      request = (Envelope % [@session_id, @batch_size, extra_headers, expanded])
+      request = (Envelope % [@session_id, extra_headers, expanded])
 
       # reset the batch size for the next request
       @batch_size = DEFAULT_BATCH_SIZE
@@ -192,7 +211,7 @@ module RForce
         login(@user, @password)
 
         # repackage and rencode request with the new session id
-        request = (Envelope % [@session_id, @batch_size, extra_headers, expanded])
+        request = (Envelope % [@session_id, extra_headers, expanded])
         request = encode(request)
 
         # Send the request to the server and read the response.
@@ -245,11 +264,11 @@ module RForce
 
     # Turns method calls on this object into remote SOAP calls.
     def method_missing(method, *args)
-      unless args.size == 1 && [Hash, Array].include?(args[0].class)
-        raise 'Expected 1 Hash or Array argument'
+      unless args.empty? || (args.size == 1 && [Hash, Array].include?(args[0].class))
+        raise 'Expected at most 1 Hash or Array argument'
       end
 
-      call_remote method, args[0]
+      call_remote method, args[0] || []
     end
   end
 end

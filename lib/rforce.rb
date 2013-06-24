@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 =end
 
-#  RForce is a simple Ruby binding to the SalesForce CRM system.
+#  RForce is a simple Ruby binding to the Salesforce CRM system.
 #  Rather than enforcing adherence to the sforce.com schema,
 #  RForce assumes you are familiar with the API.  Ruby method names
 #  become SOAP method names.  Nested Ruby hashes become nested
@@ -53,8 +53,8 @@ module RForce
   # Expand Ruby data structures into XML.
   def expand(builder, args, xmlns = nil)
     # Nest arrays: [:a, 1, :b, 2] => [[:a, 1], [:b, 2]]
-    if (args.class == Array)
-      args.each_index{|i| args[i, 2] = [args[i, 2]]}
+    if args.is_a?(Array)
+      args = args.each_slice(2).to_a
     end
 
     args.each do |key, value|
